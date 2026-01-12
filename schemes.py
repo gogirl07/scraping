@@ -133,84 +133,6 @@ def find_latest_post_for_company(posts, company):
  
  
 # ------------------ STEP 2: IMAGE TABLE OCR (EASYOCR) ------------------
-# def extract_table_from_image_url(image_url):
-#     print(f"   Downloading image: {image_url}")
- 
-#     try:
-#         response = requests.get(image_url, timeout=30)
-#         image = Image.open(BytesIO(response.content)).convert("RGB")
- 
-#         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
-#             image.save(tmp.name)
-#             image_path = tmp.name
- 
-#         result = table_engine(image_path)
- 
-#         tables = []
- 
-#         for res in result:
-#             if res["type"] == "table":
-#                 html = res["res"]["html"]
-#                 dfs = pd.read_html(html)
-#                 for df in dfs:
-#                     tables.append(df)
- 
-#         if not tables:
-#             print("   ❌ No table detected by PaddleOCR")
-#             return pd.DataFrame()
- 
-#         final_df = pd.concat(tables, ignore_index=True)
- 
-#         # ---------------- CLEANUP ----------------
-#         final_df = final_df.dropna(how="all")
-#         final_df = final_df.loc[:, ~final_df.columns.astype(str).str.contains("^Unnamed")]
-#         final_df.columns = [str(c).strip() for c in final_df.columns]
- 
-#         # ---------------- CRITICAL FIX ----------------
-#         model_col = final_df.columns[0]
- 
-#         # Normalize
-#         final_df[model_col] = final_df[model_col].astype(str).str.strip()
-#         final_df[model_col] = final_df[model_col].replace(["", "nan", "None"], np.nan)
- 
-#         # Forward fill
-#         final_df[model_col] = final_df[model_col].ffill()
- 
-#         # ---------------- HARD BOUNDARY FIX ----------------
-#         # If a row contains a new model name, force overwrite
-#         known_models = final_df[model_col].dropna().unique().tolist()
- 
-#         current_model = None
-#         cleaned_models = []
- 
-#         for val in final_df[model_col]:
-#             if val in known_models:
-#                 current_model = val
-#                 cleaned_models.append(val)
-#             else:
-#                 cleaned_models.append(current_model)
- 
-#         final_df[model_col] = cleaned_models
- 
-#         # ---------------- REMOVE GARBAGE ----------------
-#         final_df = final_df[~final_df[model_col].str.contains(
-#             "either scrap|exchange|t&c|conditions apply", case=False, na=False
-#         )]
- 
-#         final_df = final_df.reset_index(drop=True)
- 
-#         return final_df
- 
-#     except Exception as e:
-#         print("   ❌ PaddleOCR error:", e)
-#         return pd.DataFrame()
- 
-#     finally:
-#         try:
-#             os.remove(image_path)
-#         except:
-#             pass
- 
 def extract_table_from_image_url(image_url):
     print(f"   Downloading image: {image_url}")
  
@@ -223,6 +145,7 @@ def extract_table_from_image_url(image_url):
             image_path = tmp.name
  
         result = table_engine(image_path)
+ 
         tables = []
  
         for res in result:
@@ -236,53 +159,46 @@ def extract_table_from_image_url(image_url):
             print("   ❌ No table detected by PaddleOCR")
             return pd.DataFrame()
  
-        # Combine all detected table fragments
         final_df = pd.concat(tables, ignore_index=True)
  
-        # ---------------- 1. CLEANUP UNNAMED & EMPTY ----------------
+        # ---------------- CLEANUP ----------------
         final_df = final_df.dropna(how="all")
-        # Remove columns that are 100% "Unnamed"
         final_df = final_df.loc[:, ~final_df.columns.astype(str).str.contains("^Unnamed")]
         final_df.columns = [str(c).strip() for c in final_df.columns]
  
-        # Identify key columns by index (Model is usually 0, Variant is 1)
+        # ---------------- CRITICAL FIX ----------------
         model_col = final_df.columns[0]
-        variant_col = final_df.columns[1] if len(final_df.columns) > 1 else model_col
  
-        # ---------------- 2. STRIP HEADERS CAPTURED AS DATA ----------------
-        # This prevents the "Row Shift" you see in your Excel
-        header_keywords = ["MODEL", "VARIANT", "GROUP", "CONSUMER", "EXCHANGE"]
-        final_df = final_df[~final_df[model_col].astype(str).str.upper().isin(header_keywords)]
-       
-        # Normalize strings
-        final_df[model_col] = final_df[model_col].astype(str).str.strip().replace(["", "nan", "None", "None None"], np.nan)
-        if variant_col != model_col:
-            final_df[variant_col] = final_df[variant_col].astype(str).str.strip().replace(["", "nan", "None"], np.nan)
+        # Normalize
+        final_df[model_col] = final_df[model_col].astype(str).str.strip()
+        final_df[model_col] = final_df[model_col].replace(["", "nan", "None"], np.nan)
  
-        # ---------------- 3. CONDITIONAL FORWARD FILL (THE FIX) ----------------
-        # Instead of global .ffill(), we only fill the Model if a Variant exists
-        # in that row. This keeps Ignis variants with Ignis and Baleno with Baleno.
-        for i in range(1, len(final_df)):
-            current_model = final_df.iloc[i][model_col]
-            current_variant = final_df.iloc[i][variant_col]
-           
-            # If Model is empty but Variant has data, it belongs to the previous Model
-            if pd.isna(current_model) and pd.notna(current_variant):
-                final_df.iloc[i, final_df.columns.get_loc(model_col)] = final_df.iloc[i-1][model_col]
+        # Forward fill
+        final_df[model_col] = final_df[model_col].ffill()
  
-        # ---------------- 4. REMOVE FOOTER GARBAGE ----------------
-        # Clean up disclaimer text that PaddleOCR often puts in the Model column
-        garbage_mask = final_df[model_col].astype(str).str.contains(
-            "either scrap|exchange|t&c|conditions apply|applicable|policy|total max",
-            case=False, na=False
-        )
-        final_df = final_df[~garbage_mask]
+        # ---------------- HARD BOUNDARY FIX ----------------
+        # If a row contains a new model name, force overwrite
+        known_models = final_df[model_col].dropna().unique().tolist()
  
-        # Final check: Drop rows where all numerical data is missing
-        # (Keeps the table clean of OCR noise)
-        final_df = final_df.dropna(subset=final_df.columns[2:], how='all')
+        current_model = None
+        cleaned_models = []
+ 
+        for val in final_df[model_col]:
+            if val in known_models:
+                current_model = val
+                cleaned_models.append(val)
+            else:
+                cleaned_models.append(current_model)
+ 
+        final_df[model_col] = cleaned_models
+ 
+        # ---------------- REMOVE GARBAGE ----------------
+        final_df = final_df[~final_df[model_col].str.contains(
+            "either scrap|exchange|t&c|conditions apply", case=False, na=False
+        )]
  
         final_df = final_df.reset_index(drop=True)
+ 
         return final_df
  
     except Exception as e:
@@ -291,10 +207,10 @@ def extract_table_from_image_url(image_url):
  
     finally:
         try:
-            if 'image_path' in locals():
-                os.remove(image_path)
+            os.remove(image_path)
         except:
             pass
+
 # ------------------ STEP 3: MAIN SCRAPER ------------------
 def scrape_schemes(company):
     posts = fetch_all_posts()
