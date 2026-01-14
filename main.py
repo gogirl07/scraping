@@ -69,16 +69,23 @@ with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl", mode="w") as writer:
         # -----------------------------
         # Schemes
         # -----------------------------
+        # Schemes (from main_sch logic)
+        # -----------------------------
         schemes_df = scrape_schemes(company)
+
         if not schemes_df.empty:
-        
-            schemes_df.to_excel(
-                writer,
-                sheet_name=sheet,
-                startrow=start_row,
-                index=False
-            )
-            start_row += len(schemes_df) + 3
+            print(f"Writing schemes for {company}...")
+
+        schemes_df.to_excel(
+            writer,
+            sheet_name=sheet,
+            startrow=start_row,
+            index=False,
+            header=(start_row == 0)
+        )
+
+        start_row += len(schemes_df) + 3
+
 
         # -----------------------------
         # Pricing (Structured)
